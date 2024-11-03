@@ -1,5 +1,4 @@
 import random
-import json
 import time
 from confluent_kafka import Producer, Consumer, KafkaException
 import matplotlib.pyplot as plt
@@ -24,20 +23,47 @@ all_temp = []
 all_hume = []
 all_wind = []
 
-def generateData():
-    temperature = round(random.uniform(0, 110), 2)
-    humidity = random.randint(0, 100)
-    wind_direction = random.choice(["E", "NE", "N", "NO", "O", "SO", "S", "SE"])
+def encode_data(temperature, humidity, wind_direction):
+    # Temperatura - 14 bits
+    temperature = int(temperature * 100)
+    # humedad - 7 bits
+    humidity = humidity
+    # Direccion del viento - 3 bits
+    wind_dict = {"E": 0, "NE": 1, "N": 2, "NO": 3, "O": 4, "SO": 5, "S": 6, "SE": 7}
+    wind_direction = wind_dict[wind_direction]
 
-    return { "temperatura": temperature, "humedad": humidity, "direccion_viento": wind_direction }
+    combined_bits = (temperature << 10) | (humidity << 3) | wind_direction
+    return combined_bits.to_bytes(3, byteorder='big')
+
+def decode_data(encoded_data):
+    combined_bits = int.from_bytes(encoded_data, byteorder='big')
+    
+    # Temperatura - 14 bits
+    temperature = (combined_bits >> 10) & 0x3FFF
+    temperature = temperature / 100.0
+    
+    # Humedad - 7 bits
+    humidity = (combined_bits >> 3) & 0x7F
+    
+    # Direccion del viento - 3 bits
+    wind_direction = combined_bits & 0x7
+    wind_dict = {0: "E", 1: "NE", 2: "N", 3: "NO", 4: "O", 5: "SO", 6: "S", 7: "SE"}
+    wind_direction = wind_dict[wind_direction]
+
+    return {"temperatura": temperature, "humedad": humidity, "direccion_viento": wind_direction}
+
 
 def sendData():
     while True:
-        data = json.dumps(generateData())
-        producer.produce(topic, value=data)
+        temperature = round(random.uniform(0, 110), 2)
+        humidity = random.randint(0, 100)
+        wind_direction = random.choice(["E", "NE", "N", "NO", "O", "SO", "S", "SE"])
+        
+        encoded_data = encode_data(temperature, humidity, wind_direction)
+        
+        producer.produce(topic, value=encoded_data)
         producer.flush()
-        print(data)
-
+        print(f"Datos enviados (codificados): {encoded_data}")
         time.sleep(random.randint(15, 30))
         
 def plotData():
@@ -47,14 +73,15 @@ def plotData():
     while True:
         msg = consumer.poll(timeout=1)
         if msg is None:
-            break
+            continue
         if msg.error():
             print(f"Error al recibir mensaje: {msg.error()}")
             continue
 
-        data = json.loads(msg.value().decode('utf-8'))
-        print(f"Datos recibidos: {data}")
-        
+        # Decodificar mensaje recibido
+        data = decode_data(msg.value())
+        print(f"Datos recibidos (decodificados): {data}")
+
         all_temp.append(data["temperatura"])
         all_hume.append(data["humedad"])
         all_wind.append(data["direccion_viento"])
@@ -77,6 +104,7 @@ def plotData():
         ax[2].set_xticklabels(["E", "NE", "N", "NO", "O", "SO", "S", "SE"])
 
         plt.pause(1)
+
 
 try:
     sendData()
